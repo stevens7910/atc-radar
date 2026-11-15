@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#080C14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="ATC Radar – PWA hra simulující řízení letového provozu." />
+  <title>ATC Radar</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+  <link rel="apple-touch-icon" href="./icons/icon.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <canvas id="radar-canvas" aria-label="ATC Radar herní plocha"></canvas>
+
+  <!-- Minimalist Top HUD -->
+  <header class="hud">
+    <div class="hud-panel">
+      <div class="hud-stat">
+        <span class="hud-label">Přistání</span>
+        <span id="hud-score" class="hud-value hud-value--accent">0</span>
+      </div>
+      <div class="hud-divider"></div>
+      <div class="hud-stat">
+        <span id="hud-wave" class="hud-label">VLNA 1</span>
+        <span id="hud-time" class="hud-value">00:00</span>
+      </div>
+    </div>
+
+    <div class="hud-actions">
+      <button id="btn-speed" class="hud-pill-btn hidden" type="button" aria-label="Rychlost simulace" title="Rychlost simulace (1x / 2x)">1x</button>
+      <button id="btn-tags" class="hud-pill-btn is-active hidden" type="button" aria-label="Datové štítky" aria-pressed="true" title="Zobrazit/skrýt štítky letadel">TAG</button>
+
+      <button id="btn-sound" class="icon-btn" type="button" aria-label="Zvuk" aria-pressed="false" title="Zvuk">
+        <svg id="icon-sound-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+        </svg>
+        <svg id="icon-sound-off" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <line x1="23" y1="9" x2="17" y2="15"></line>
+          <line x1="17" y1="9" x2="23" y2="15"></line>
+        </svg>
+      </button>
+
+      <button id="btn-pause" class="icon-btn hidden" type="button" aria-label="Pauza" title="Pauza">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="6" y="4" width="4" height="16"></rect>
+          <rect x="14" y="4" width="4" height="16"></rect>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Wind Rose Indicator (bottom-left) -->
+  <aside id="wind-hud" class="wind-hud hidden" aria-label="Směr a rychlost větru">
+    <div class="wind-compass">
+      <svg id="wind-arrow" class="wind-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="19" x2="12" y2="5"></line>
+        <polyline points="6 11 12 5 18 11"></polyline>
+      </svg>
+    </div>
+    <div class="wind-info">
+      <span class="wind-title">VÍTR (PROTI VĚTRU)</span>
+      <span id="wind-readout" class="wind-readout">240° / 16 KT</span>
+    </div>
+  </aside>
+
+  <!-- Start / Map Selection Modal -->
+  <section id="modal-menu" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-badge">ATC RADAR</span>
+      </div>
+      <h1 id="menu-title" class="modal-title">Řízení letového provozu</h1>
+      <p class="modal-subtitle">
+        Nakresli letadlům trasu k odpovídající přistávací ploše ve směru přiblížení a udržuj bezpečný rozestup.
+      </p>
+
+      <div class="map-list">
+        <button class="map-card" type="button" data-map="basic">
+          <div class="map-card-top">
+            <span class="map-name">Základní letiště</span>
+            <span class="map-best">Rekord: <span id="best-basic">0</span></span>
+          </div>
+          <div class="map-desc">Dvě kolmé dráhy a heliport • Ideální pro rozehřátí</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="busy">
+          <div class="map-card-top">
+            <span class="map-name">Rušný uzel</span>
+            <span class="map-best">Rekord: <span id="best-busy">0</span></span>
+          </div>
+          <div class="map-desc">Křížící se dráhy, bouřky a hustší provoz</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="lkpr">
+          <div class="map-card-top">
+            <span class="map-name">Praha Ruzyně (LKPR)</span>
+            <span class="map-best">Rekord: <span id="best-lkpr">0</span></span>
+          </div>
+          <div class="map-desc">Dráhy 06/24 &amp; 12/30, Vltava, VOR majáky a reálné volací znaky</div>
+        </button>
+      </div>
+
+      <div class="legend">
+        <div class="legend-item">
+          <span class="dot dot--blue"></span>
+          <span>Dopravní → Modrá ranvej</span>
+        </div>
+        <div class="legend-item">
+          <span class="dot dot--yellow"></span>
+          <span>Vrtulové → Žlutá ranvej</span>
+        </div>
+        <div class="legend-item">
+          <span class="dot dot--green"></span>
+          <span>Vrtulník → Heliport (H)</span>
+        </div>
+        <div class="legend-item">
+          <span class="dot dot--red"></span>
+          <span>VIP let → Prioritní průlet</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pause Modal -->
+  <section id="modal-pause" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-badge">POZASTAVENO</span>
+      </div>
+      <h2 id="pause-title" class="modal-title">Hra pozastavena</h2>
+      <p class="modal-subtitle">Provoz na radaru je dočasně zastaven.</p>
+      <div class="btn-stack">
+        <button id="btn-resume" class="btn btn-primary" type="button">Pokračovat</button>
+        <button id="btn-pause-restart" class="btn btn-secondary" type="button">Restartovat sektor</button>
+        <button id="btn-pause-menu" class="btn btn-secondary" type="button">Výběr mapy</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Game Over Modal -->
+  <section id="modal-gameover" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="go-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-badge modal-badge--red">KOLIZE</span>
+        <span id="go-record-badge" class="modal-badge modal-badge--gold hidden">NOVÝ REKORD</span>
+      </div>
+      <h2 id="go-title" class="modal-title">Narušení separace</h2>
+      <p class="modal-subtitle">Sektor: <strong id="go-map">Základní letiště</strong></p>
+
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-box-label">Přistání</div>
+          <div id="go-score" class="stat-box-val">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-box-label">Rekord</div>
+          <div id="go-best" class="stat-box-val">0</div>
+        </div>
+      </div>
+
+      <div class="btn-stack">
+        <button id="btn-retry" class="btn btn-primary" type="button">Hrát znovu</button>
+        <button id="btn-go-menu" class="btn btn-secondary" type="button">Výběr mapy</button>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
