@@ -62,6 +62,9 @@ const windHud = document.getElementById('wind-hud');
 const windArrow = document.getElementById('wind-arrow');
 const windReadout = document.getElementById('wind-readout');
 
+const btnZoomReset = document.getElementById('btn-zoom-reset');
+const zoomReadout = document.getElementById('zoom-readout');
+
 const modalMenu = document.getElementById('modal-menu');
 const modalPause = document.getElementById('modal-pause');
 const modalGameOver = document.getElementById('modal-gameover');
@@ -83,8 +86,12 @@ const btnRetry = document.getElementById('btn-retry');
 const btnGoMenu = document.getElementById('btn-go-menu');
 
 let selectedMapId = 'basic';
-let activePointerId = null;
 let lastFrameTime = performance.now();
+
+// Multi-touch & Pointer state
+const activePointers = new Map(); // pointerId -> { x, y }
+let drawingPointerId = null;
+let pinchState = null; // { startDist, startZoom, anchorWorldX, anchorWorldY }
 
 function updateSoundUI() {
   const muted = audio.isMuted();
@@ -110,6 +117,12 @@ function updateWindUI(deg, knots) {
   windArrow.style.transform = `rotate(${deg}deg)`;
 }
 
+function updateZoomUI(zoom) {
+  const show = (engine.state === 'playing' || engine.state === 'paused') && zoom > 1.03;
+  btnZoomReset.classList.toggle('hidden', !show);
+  zoomReadout.textContent = `${zoom.toFixed(1)}×`;
+}
+
 function refreshMenuBestScores() {
   const best = loadBestScores();
   bestBasicEl.textContent = best.basic || 0;
@@ -127,6 +140,13 @@ function syncUIState(state) {
   btnSpeed.classList.toggle('hidden', !showHudControls);
   btnTags.classList.toggle('hidden', !showHudControls);
   windHud.classList.toggle('hidden', !showHudControls);
+  updateZoomUI(engine.zoom);
+
+  if (state !== 'playing') {
+    activePointers.clear();
+    drawingPointerId = null;
+    pinchState = null;
+  }
 
   if (state === 'menu') {
     refreshMenuBestScores();
@@ -145,6 +165,9 @@ function syncUIState(state) {
 engine.onStateChange = syncUIState;
 engine.onWindChange = (deg, knots) => {
   updateWindUI(deg, knots);
+};
+engine.onCameraChange = (zoom) => {
+  updateZoomUI(zoom);
 };
 
 function handleResize() {
@@ -181,6 +204,10 @@ btnTags.addEventListener('click', () => {
   audio.init();
   engine.toggleTags();
   updateTagsUI();
+});
+
+btnZoomReset.addEventListener('click', () => {
+  engine.resetCamera();
 });
 
 btnSound.addEventListener('click', () => {
@@ -233,7 +260,28 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Unified Pointer Events for Touch & Mouse
+// Prevent browser native pinch-zoom / scrolling on mobile canvas
+canvas.addEventListener(
+  'touchstart',
+  (e) => {
+    if (engine.state === 'playing') {
+      e.preventDefault();
+    }
+  },
+  { passive: false }
+);
+
+canvas.addEventListener(
+  'touchmove',
+  (e) => {
+    if (engine.state === 'playing') {
+      e.preventDefault();
+    }
+  },
+  { passive: false }
+);
+
+// Unified Pointer Events for 1-finger path drawing & 2-finger pinch-to-zoom
 function getCanvasCoords(e) {
   const rect = canvas.getBoundingClientRect();
   return {
@@ -242,41 +290,132 @@ function getCanvasCoords(e) {
   };
 }
 
+function beginPinch() {
+  const pts = Array.from(activePointers.values());
+  if (pts.length < 2) return;
+  const [p1, p2] = pts;
+  const midX = (p1.x + p2.x) * 0.5;
+  const midY = (p1.y + p2.y) * 0.5;
+  const startDist = Math.max(10, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+  const anchorWorld = engine.screenToWorld(midX, midY);
+
+  pinchState = {
+    startDist,
+    startZoom: engine.zoom,
+    anchorWorldX: anchorWorld.x,
+    anchorWorldY: anchorWorld.y
+  };
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   audio.init();
   if (engine.state !== 'playing') return;
-  if (activePointerId !== null) return;
 
-  const { x, y } = getCanvasCoords(e);
-  engine.updateHover(x, y);
-  const grabbed = engine.startDrawing(x, y);
-  if (grabbed) {
-    activePointerId = e.pointerId;
-    try {
-      canvas.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
+  const pos = getCanvasCoords(e);
+  activePointers.set(e.pointerId, pos);
+
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    // ignore
+  }
+
+  // 2 fingers -> switch to pinch-to-zoom immediately and cancel any single-finger drawing
+  if (activePointers.size >= 2) {
+    if (drawingPointerId !== null) {
+      engine.endDrawing();
+      drawingPointerId = null;
+    }
+    beginPinch();
+    return;
+  }
+
+  // 1 finger -> grab aircraft & draw path
+  if (activePointers.size === 1 && !pinchState) {
+    const world = engine.screenToWorld(pos.x, pos.y);
+    engine.updateHover(world.x, world.y);
+    const grabbed = engine.startDrawing(world.x, world.y);
+    if (grabbed) {
+      drawingPointerId = e.pointerId;
     }
   }
 });
 
 canvas.addEventListener('pointermove', (e) => {
-  const { x, y } = getCanvasCoords(e);
-  if (e.pointerId === activePointerId) {
-    engine.continueDrawing(x, y);
-  } else if (activePointerId === null) {
-    engine.updateHover(x, y);
+  const pos = getCanvasCoords(e);
+
+  if (activePointers.has(e.pointerId)) {
+    activePointers.set(e.pointerId, pos);
+  }
+
+  // Handle 2-finger pinch-to-zoom & pan
+  if (activePointers.size >= 2 && pinchState) {
+    const pts = Array.from(activePointers.values());
+    const [p1, p2] = pts;
+    const midX = (p1.x + p2.x) * 0.5;
+    const midY = (p1.y + p2.y) * 0.5;
+    const curDist = Math.max(10, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+
+    const newZoom = pinchState.startZoom * (curDist / pinchState.startDist);
+    const clampedZoom = Math.max(engine.minZoom, Math.min(engine.maxZoom, newZoom));
+    const cx = engine.width / 2;
+    const cy = engine.height / 2;
+    const newPanX = midX - cx - (pinchState.anchorWorldX - cx) * clampedZoom;
+    const newPanY = midY - cy - (pinchState.anchorWorldY - cy) * clampedZoom;
+
+    engine.setCamera(clampedZoom, newPanX, newPanY);
+    return;
+  }
+
+  // Handle 1-finger path drawing
+  if (e.pointerId === drawingPointerId) {
+    const world = engine.screenToWorld(pos.x, pos.y);
+    engine.continueDrawing(world.x, world.y);
+    return;
+  }
+
+  // Desktop hover for Data Tags
+  if (drawingPointerId === null && activePointers.size === 0) {
+    const world = engine.screenToWorld(pos.x, pos.y);
+    engine.updateHover(world.x, world.y);
   }
 });
 
 function releasePointer(e) {
-  if (e.pointerId !== activePointerId) return;
-  engine.endDrawing();
-  activePointerId = null;
+  activePointers.delete(e.pointerId);
+
+  if (e.pointerId === drawingPointerId) {
+    engine.endDrawing();
+    drawingPointerId = null;
+  }
+
+  if (activePointers.size < 2) {
+    pinchState = null;
+  }
 }
 
 canvas.addEventListener('pointerup', releasePointer);
 canvas.addEventListener('pointercancel', releasePointer);
+canvas.addEventListener('lostpointercapture', releasePointer);
+
+// Desktop mouse wheel zoom around cursor
+canvas.addEventListener(
+  'wheel',
+  (e) => {
+    if (engine.state !== 'playing') return;
+    e.preventDefault();
+    const pos = getCanvasCoords(e);
+    const anchor = engine.screenToWorld(pos.x, pos.y);
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const nextZoom = Math.max(engine.minZoom, Math.min(engine.maxZoom, engine.zoom * factor));
+    const cx = engine.width / 2;
+    const cy = engine.height / 2;
+    const nextPanX = pos.x - cx - (anchor.x - cx) * nextZoom;
+    const nextPanY = pos.y - cy - (anchor.y - cy) * nextZoom;
+    engine.setCamera(nextZoom, nextPanX, nextPanY);
+  },
+  { passive: false }
+);
 
 // Main animation loop
 function loop(now) {

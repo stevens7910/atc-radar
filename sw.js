@@ -1,4 +1,4 @@
-const CACHE_NAME = 'atc-radar-v2';
+const CACHE_NAME = 'atc-radar-v3';
 
 const ASSETS = [
   './',

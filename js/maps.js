@@ -10,7 +10,7 @@ export const AIRCRAFT_TYPES = {
     color: '#38BDF8',
     confirmColor: '#7DD3FC',
     speed: 64,
-    turnRate: 1.65,
+    turnRate: 2.35,
     baseFl: 240,
     baseKts: 280,
     size: 14,

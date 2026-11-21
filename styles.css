@@ -233,6 +233,40 @@ body {
   color: var(--text-main);
 }
 
+/* Zoom Reset Pill (bottom-right) */
+.zoom-hud {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--accent-blue);
+  background: rgba(8, 12, 20, 0.85);
+  color: var(--accent-blue);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 10;
+  transition: transform 0.1s ease, background-color 0.15s ease;
+}
+
+.zoom-hud:active {
+  transform: scale(0.95);
+}
+
+.zoom-hint {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
 /* Modals */
 .modal-backdrop {
   position: fixed;

@@ -35,6 +35,12 @@ export class RadarRenderer {
     ctx.fillStyle = '#080C14';
     ctx.fillRect(0, 0, w, h);
 
+    // Apply camera transform (pinch-to-zoom & pan)
+    ctx.save();
+    ctx.translate(cx + engine.panX, cy + engine.panY);
+    ctx.scale(engine.zoom, engine.zoom);
+    ctx.translate(-cx, -cy);
+
     // 2. Radar Grid & Sweep
     this._drawRadarGrid(ctx, cx, cy, w, h, engine.radarAngle, engine.scale);
 
@@ -85,14 +91,17 @@ export class RadarRenderer {
       this._drawAircraft(ctx, ac, showTag, time, engine.scale);
     }
 
-    // 9. Pending Spawn Edge Warnings
-    for (const pending of engine.pendingSpawns) {
-      this._drawSpawnWarning(ctx, pending, w, h, time, engine.scale);
-    }
-
-    // 10. Visual Effects
+    // 9. Visual Effects
     for (const fx of engine.effects) {
       this._drawEffect(ctx, fx, engine.scale);
+    }
+
+    ctx.restore();
+
+    // 10. Pending Spawn Edge Warnings (screen-space so always visible even when zoomed in)
+    for (const pending of engine.pendingSpawns) {
+      const screenPos = engine.worldToScreen(pending.edgeX, pending.edgeY);
+      this._drawSpawnWarning(ctx, pending, screenPos.x, screenPos.y, w, h, time, engine.scale);
     }
   }
 
@@ -332,12 +341,13 @@ export class RadarRenderer {
     }
 
     // Animated PAPI / approach chevrons on active end (-hw)
+    const wrongFlash = rwy.wrongDirFlash > 0;
     for (let k = 0; k < 2; k++) {
       const phase = (time * 3 - k * 0.45) % 1;
-      const alpha = Math.max(0.2, 1 - Math.abs(phase - 0.5) * 2);
-      ctx.strokeStyle = rwy.color;
-      ctx.globalAlpha = highlight ? 1 : alpha;
-      ctx.lineWidth = 2;
+      const alpha = Math.max(0.25, 1 - Math.abs(phase - 0.5) * 2);
+      ctx.strokeStyle = wrongFlash ? '#FF9500' : rwy.color;
+      ctx.globalAlpha = highlight || wrongFlash ? 1 : alpha;
+      ctx.lineWidth = wrongFlash ? 2.8 : 2;
       const ax = -hw - (10 + k * 9) * scale;
       ctx.beginPath();
       ctx.moveTo(ax - 5 * scale, -4.5 * scale);
@@ -346,6 +356,18 @@ export class RadarRenderer {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+
+    if (wrongFlash) {
+      ctx.save();
+      ctx.translate(-hw - 30 * scale, 0);
+      ctx.rotate(-activeAngle);
+      ctx.fillStyle = '#FF9500';
+      ctx.font = `700 ${Math.round(9.5 * scale)}px "JetBrains Mono", ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('ZDE PROTI VĚTRU', 0, -14 * scale);
+      ctx.restore();
+    }
 
     // Active runway code (bright) & inactive opposite code (dimmed)
     ctx.font = `700 ${Math.round(9.5 * scale)}px "JetBrains Mono", ui-monospace, monospace`;
@@ -603,11 +625,11 @@ export class RadarRenderer {
     ctx.restore();
   }
 
-  _drawSpawnWarning(ctx, pending, w, h, time, scale) {
+  _drawSpawnWarning(ctx, pending, screenX, screenY, w, h, time, scale) {
     const spec = AIRCRAFT_TYPES[pending.type];
     const inset = 24 * scale;
-    const x = Math.max(inset, Math.min(w - inset, pending.edgeX));
-    const y = Math.max(inset, Math.min(h - inset, pending.edgeY));
+    const x = Math.max(inset, Math.min(w - inset, screenX));
+    const y = Math.max(inset, Math.min(h - inset, screenY));
 
     const pulse = 0.55 + 0.45 * Math.sin(time * 10);
 

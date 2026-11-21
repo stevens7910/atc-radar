@@ -42,6 +42,13 @@ export class GameEngine {
     this.height = 600;
     this.scale = 1;
 
+    // Camera (pinch-to-zoom & pan)
+    this.zoom = 1;
+    this.minZoom = 1;
+    this.maxZoom = 2.6;
+    this.panX = 0;
+    this.panY = 0;
+
     this.mapId = 'basic';
     this.mapConfig = MAPS.basic;
     this.layout = { runways: [], heliports: [], decor: null };
@@ -80,6 +87,7 @@ export class GameEngine {
 
     this.onStateChange = null;
     this.onWindChange = null;
+    this.onCameraChange = null;
   }
 
   resize(width, height) {
@@ -88,20 +96,61 @@ export class GameEngine {
     const minDim = Math.min(this.width, this.height);
     this.scale = Math.max(0.65, Math.min(1.25, minDim / 720));
     this._rebuildLayout();
+    this.setCamera(this.zoom, this.panX, this.panY);
   }
 
   _rebuildLayout() {
     const cx = this.width / 2;
     const cy = this.height / 2;
     this.layout = this.mapConfig.buildLayout(cx, cy, this.scale, this.width, this.height);
+    for (const rwy of this.layout.runways) {
+      rwy.wrongDirFlash = 0;
+    }
+  }
+
+  /**
+   * Camera helpers for pinch-to-zoom and pan
+   */
+  screenToWorld(sx, sy) {
+    const cx = this.width / 2;
+    const cy = this.height / 2;
+    return {
+      x: (sx - cx - this.panX) / this.zoom + cx,
+      y: (sy - cy - this.panY) / this.zoom + cy
+    };
+  }
+
+  worldToScreen(wx, wy) {
+    const cx = this.width / 2;
+    const cy = this.height / 2;
+    return {
+      x: (wx - cx) * this.zoom + cx + this.panX,
+      y: (wy - cy) * this.zoom + cy + this.panY
+    };
+  }
+
+  setCamera(zoom, panX, panY) {
+    const z = Math.max(this.minZoom, Math.min(this.maxZoom, zoom));
+    const maxPanX = ((z - 1) * this.width) / 2;
+    const maxPanY = ((z - 1) * this.height) / 2;
+    this.zoom = z;
+    this.panX = z <= 1.001 ? 0 : Math.max(-maxPanX, Math.min(maxPanX, panX));
+    this.panY = z <= 1.001 ? 0 : Math.max(-maxPanY, Math.min(maxPanY, panY));
+    if (this.onCameraChange) {
+      this.onCameraChange(this.zoom);
+    }
+  }
+
+  resetCamera() {
+    this.setCamera(1, 0, 0);
   }
 
   _randomizeWind(notify = false) {
     const deg = Math.floor(Math.random() * 36) * 10;
     this.windFromDeg = deg === 0 ? 360 : deg;
     this.windFromAngle = ((this.windFromDeg - 90) * Math.PI) / 180;
-    this.windKnots = 10 + Math.floor(Math.random() * 18); // 10 - 27 KT
-    this.windTimer = 60 + Math.random() * 30; // 60 - 90s
+    this.windKnots = 10 + Math.floor(Math.random() * 18);
+    this.windTimer = 60 + Math.random() * 30;
     if (notify) {
       this.windShiftFlash = 3.2;
       this.audio.playWindShift();
@@ -115,6 +164,7 @@ export class GameEngine {
     this.mapId = MAPS[mapId] ? mapId : 'basic';
     this.mapConfig = MAPS[this.mapId];
     this._rebuildLayout();
+    this.resetCamera();
 
     this.state = 'playing';
     this.gameOverReason = 'Narušení separace';
@@ -148,7 +198,7 @@ export class GameEngine {
   togglePause() {
     if (this.state === 'playing') {
       this.state = 'paused';
-      this.activeAircraft = null;
+      this.endDrawing();
     } else if (this.state === 'paused') {
       this.state = 'playing';
     }
@@ -157,7 +207,8 @@ export class GameEngine {
 
   setMenu() {
     this.state = 'menu';
-    this.activeAircraft = null;
+    this.endDrawing();
+    this.resetCamera();
     if (this.onStateChange) this.onStateChange(this.state);
   }
 
@@ -171,16 +222,16 @@ export class GameEngine {
     return this.showAllTags;
   }
 
-  updateHover(x, y) {
+  updateHover(wx, wy) {
     if (this.state !== 'playing') {
       this.hoveredAircraftId = null;
       return;
     }
-    const hitRadius = Math.max(24, 24 * this.scale);
+    const hitRadius = Math.max(26, 26 * this.scale) / this.zoom;
     let best = null;
     let bestDist = hitRadius;
     for (const ac of this.aircraft) {
-      const d = dist(x, y, ac.x, ac.y);
+      const d = dist(wx, wy, ac.x, ac.y);
       if (d <= bestDist) {
         bestDist = d;
         best = ac;
@@ -313,6 +364,8 @@ export class GameEngine {
       y: pending.spawnY,
       heading: pending.heading,
       path: [],
+      lastDrawPt: null,
+      isDrawing: false,
       lockedTarget: null,
       lockedAngle: null,
       hasEntered: false,
@@ -357,7 +410,6 @@ export class GameEngine {
       y = this.height * (0.2 + Math.random() * 0.6);
     }
 
-    // Aim across the airspace (slightly off-center so it doesn't sit directly on the airport forever)
     const tx = this.width * (0.25 + Math.random() * 0.5);
     const ty = this.height * (0.25 + Math.random() * 0.5);
     const moveAngle = Math.atan2(ty - y, tx - x);
@@ -390,17 +442,18 @@ export class GameEngine {
   }
 
   /**
-   * Input: Pointer down on canvas
+   * Input: Pointer down on canvas (world coordinates)
    */
-  startDrawing(x, y) {
+  startDrawing(wx, wy) {
     if (this.state !== 'playing') return null;
 
-    const hitRadius = Math.max(26, 28 * this.scale);
+    // Generous touch hitbox (at least ~42px on screen regardless of zoom)
+    const hitRadius = Math.max(42, 42 * this.scale) / this.zoom;
     let best = null;
     let bestDist = hitRadius;
 
     for (const ac of this.aircraft) {
-      const d = dist(x, y, ac.x, ac.y);
+      const d = dist(wx, wy, ac.x, ac.y);
       if (d <= bestDist) {
         bestDist = d;
         best = ac;
@@ -419,22 +472,24 @@ export class GameEngine {
     best.isDrawing = true;
     best.lockedTarget = null;
     best.lockedAngle = null;
-    best.path = [{ x: best.x, y: best.y }, { x, y }];
+    best.path = [];
+    best.lastDrawPt = { x: best.x, y: best.y };
     this.audio.playGrab();
     return best;
   }
 
   /**
-   * Input: Pointer move while drawing
+   * Input: Pointer move while drawing (world coordinates)
    */
-  continueDrawing(x, y) {
+  continueDrawing(wx, wy) {
     const ac = this.activeAircraft;
     if (!ac || this.state !== 'playing') return;
 
     if (ac.lockedTarget) {
       const t = ac.lockedTarget;
-      const d = dist(x, y, t.x, t.y);
-      const unlockDist = t.kind === 'heliport' ? t.radius * 2.2 : t.length * 0.85;
+      const d = dist(wx, wy, t.x, t.y);
+      const unlockDist =
+        t.kind === 'heliport' ? Math.max(t.radius * 2.5, 50) : Math.max(t.length * 0.95, 90);
       if (d < unlockDist) {
         return;
       }
@@ -442,85 +497,117 @@ export class GameEngine {
       ac.lockedAngle = null;
     }
 
-    const last = ac.path[ac.path.length - 1];
-    const d = dist(x, y, last.x, last.y);
+    const last =
+      ac.path.length > 0
+        ? ac.path[ac.path.length - 1]
+        : ac.lastDrawPt || { x: ac.x, y: ac.y };
 
-    if (d >= 13) {
-      ac.path.push({ x, y });
+    const sampleStep = Math.max(8, 12 / this.zoom);
+    const d = dist(wx, wy, last.x, last.y);
+
+    if (d >= sampleStep) {
+      const currPt = { x: wx, y: wy };
+      ac.path.push(currPt);
+      ac.lastDrawPt = currPt;
       if (ac.path.length > 3) {
         ac.path = smoothWaypoints(ac.path);
       }
-      this._tryLockTarget(ac, last, { x, y });
+      this._tryLockTarget(ac, last, currPt);
     }
   }
 
   _tryLockTarget(ac, prevPt, currPt) {
+    // Sample 3 points along the drag segment so fast finger swipes never skip the runway/heliport
+    const samples = [
+      currPt,
+      { x: (prevPt.x + currPt.x) * 0.5, y: (prevPt.y + currPt.y) * 0.5 },
+      { x: prevPt.x * 0.25 + currPt.x * 0.75, y: prevPt.y * 0.25 + currPt.y * 0.75 }
+    ];
+
     // 1. Heliports (any direction)
     if (ac.type === 'helicopter') {
       for (const heli of this.layout.heliports) {
-        if (dist(currPt.x, currPt.y, heli.x, heli.y) <= heli.radius * 1.3) {
+        const lockRadius = Math.max(heli.radius * 1.55, 30 / this.zoom);
+        if (samples.some((pt) => dist(pt.x, pt.y, heli.x, heli.y) <= lockRadius)) {
           ac.path.push({ x: heli.x, y: heli.y });
           ac.lockedTarget = heli;
           this.audio.playLock();
-          return;
+          return true;
         }
       }
     }
 
-    // 2. Runways (must align with active into-the-wind direction!)
+    // 2. Runways (must align with active into-the-wind direction)
+    const segLen = dist(prevPt.x, prevPt.y, currPt.x, currPt.y);
+
     for (const rwy of this.layout.runways) {
       if (rwy.accepts !== ac.type) continue;
 
       const { activeAngle } = getActiveRunwayDirection(rwy, this.windFromAngle);
       const cos = Math.cos(activeAngle);
       const sin = Math.sin(activeAngle);
-      const dx = currPt.x - rwy.x;
-      const dy = currPt.y - rwy.y;
 
-      const localX = dx * cos + dy * sin;
-      const localY = -dx * sin + dy * cos;
-
-      const segLen = dist(prevPt.x, prevPt.y, currPt.x, currPt.y);
       const dirX = segLen > 0.001 ? (currPt.x - prevPt.x) / segLen : cos;
       const dirY = segLen > 0.001 ? (currPt.y - prevPt.y) / segLen : sin;
       const dot = dirX * cos + dirY * sin;
 
-      const inCorridor =
-        Math.abs(localY) <= rwy.width * 1.2 &&
-        localX >= -rwy.length * 0.78 &&
-        localX <= rwy.length * 0.35;
+      const corridorHalfWidth = Math.max(rwy.width * 1.75, 28 / this.zoom);
 
-      if (inCorridor && dot > 0.25) {
-        const ep = getRunwayEndpoints(rwy, activeAngle);
-        if (localX < -rwy.length * 0.15) {
-          ac.path.push({ x: ep.entryX, y: ep.entryY });
+      for (const pt of samples) {
+        const dx = pt.x - rwy.x;
+        const dy = pt.y - rwy.y;
+        const localX = dx * cos + dy * sin;
+        const localY = -dx * sin + dy * cos;
+
+        const inCorridor =
+          Math.abs(localY) <= corridorHalfWidth &&
+          localX >= -rwy.length * 1.05 &&
+          localX <= rwy.length * 0.65;
+
+        if (!inCorridor) continue;
+
+        // Allow approaching from active threshold / side-to-centerline (reject only strongly backwards/downwind drags)
+        if (dot > -0.25) {
+          const ep = getRunwayEndpoints(rwy, activeAngle);
+          if (localX < -rwy.length * 0.2) {
+            ac.path.push({ x: ep.entryX, y: ep.entryY });
+          }
+          ac.path.push({ x: rwy.x, y: rwy.y });
+          ac.path.push({
+            x: rwy.x + ep.dirX * (rwy.length * 0.3),
+            y: rwy.y + ep.dirY * (rwy.length * 0.3)
+          });
+          ac.lockedTarget = rwy;
+          ac.lockedAngle = activeAngle;
+          this.audio.playLock();
+          return true;
+        } else {
+          // Player dragged from the inactive downwind end — flash active threshold hint
+          rwy.wrongDirFlash = 1.2;
         }
-        ac.path.push({ x: rwy.x, y: rwy.y });
-        ac.path.push({
-          x: rwy.x + ep.dirX * (rwy.length * 0.25),
-          y: rwy.y + ep.dirY * (rwy.length * 0.25)
-        });
-        ac.lockedTarget = rwy;
-        ac.lockedAngle = activeAngle;
-        this.audio.playLock();
-        return;
       }
     }
+    return false;
   }
 
   endDrawing() {
     if (this.activeAircraft) {
       const ac = this.activeAircraft;
       ac.isDrawing = false;
-      if (ac.path.length <= 2 && !ac.lockedTarget) {
-        const total =
-          ac.path.length === 2
-            ? dist(ac.path[0].x, ac.path[0].y, ac.path[1].x, ac.path[1].y)
-            : 0;
-        if (total < 14) {
+
+      // Final lock check on pointer release if finger ended right over a matching runway/heliport
+      if (!ac.lockedTarget && ac.path.length >= 1) {
+        const endPt = ac.path[ac.path.length - 1];
+        const prevPt = ac.path.length >= 2 ? ac.path[ac.path.length - 2] : { x: ac.x, y: ac.y };
+        this._tryLockTarget(ac, prevPt, endPt);
+      }
+
+      if (!ac.lockedTarget && ac.path.length === 1) {
+        if (dist(ac.x, ac.y, ac.path[0].x, ac.path[0].y) < 14) {
           ac.path = [];
         }
       }
+      ac.lastDrawPt = null;
       this.activeAircraft = null;
     }
   }
@@ -528,10 +615,15 @@ export class GameEngine {
   update(rawDt) {
     const dt = Math.min(0.05, Math.max(0, rawDt));
 
-    // Radar sweep & visual effects run smoothly at 1x
     this.radarAngle = (this.radarAngle + dt * 0.65) % (Math.PI * 2);
     if (this.windShiftFlash > 0) {
       this.windShiftFlash = Math.max(0, this.windShiftFlash - dt);
+    }
+
+    for (const rwy of this.layout.runways) {
+      if (rwy.wrongDirFlash > 0) {
+        rwy.wrongDirFlash = Math.max(0, rwy.wrongDirFlash - dt);
+      }
     }
 
     for (let i = this.effects.length - 1; i >= 0; i--) {
@@ -544,7 +636,6 @@ export class GameEngine {
 
     if (this.state !== 'playing') return;
 
-    // Sub-step at 2x speed so collision & waypoint checks stay 100% accurate
     const steps = this.speedMultiplier === 2 ? 2 : 1;
     for (let s = 0; s < steps; s++) {
       if (this.state !== 'playing') break;
@@ -556,13 +647,11 @@ export class GameEngine {
     this.elapsedTime += dt;
     this.wave = 1 + Math.floor(this.score / 5);
 
-    // Wind shift timer
     this.windTimer -= dt;
     if (this.windTimer <= 0) {
       this._randomizeWind(true);
     }
 
-    // Spawn management
     this.spawnTimer -= dt;
     const totalTraffic = this.aircraft.length + this.pendingSpawns.length;
     if (this.spawnTimer <= 0 && totalTraffic < this._getMaxConcurrent()) {
@@ -570,7 +659,6 @@ export class GameEngine {
       this.spawnTimer = this._getCurrentSpawnInterval();
     }
 
-    // Pending spawns
     for (let i = this.pendingSpawns.length - 1; i >= 0; i--) {
       const p = this.pendingSpawns[i];
       p.countdown -= dt;
@@ -580,7 +668,6 @@ export class GameEngine {
       }
     }
 
-    // Storm cell spawning & movement
     if (this.mapConfig.stormsEnabled && this.score >= this.mapConfig.stormsMinScore) {
       this.stormTimer -= dt;
       if (this.stormTimer <= 0 && this.storms.length < 2) {
@@ -608,8 +695,8 @@ export class GameEngine {
       }
     }
 
-    // Aircraft updates
-    const waypointReach = 14 * this.scale;
+    const waypointReach = 18 * this.scale;
+    const finalTouchdownReach = 22 * this.scale;
     const edgeMargin = 20 * this.scale;
 
     for (let i = this.aircraft.length - 1; i >= 0; i--) {
@@ -632,7 +719,6 @@ export class GameEngine {
         ac.hasEntered = true;
       }
 
-      // Check storm cell interaction
       if (ac.hasEntered) {
         for (const st of this.storms) {
           if (st.opacity < 0.35) continue;
@@ -640,7 +726,7 @@ export class GameEngine {
           if (dStorm < st.coreRadius) {
             this.state = 'gameover';
             this.gameOverReason = 'Ztráta letadla v silné turbulenci';
-            this.activeAircraft = null;
+            this.endDrawing();
             this.collisionPoint = { x: ac.x, y: ac.y };
             ac.warning = true;
             this.effects.push({
@@ -661,13 +747,34 @@ export class GameEngine {
         }
       }
 
-      // Waypoint navigation
+      // Waypoint navigation with abeam-pass & anti-orbit skip
       if (ac.path.length > 0) {
-        while (
-          ac.path.length > 0 &&
-          dist(ac.x, ac.y, ac.path[0].x, ac.path[0].y) < waypointReach
-        ) {
-          ac.path.shift();
+        const fwdX = Math.cos(ac.heading);
+        const fwdY = Math.sin(ac.heading);
+        while (ac.path.length > 0) {
+          const isFinal = Boolean(ac.lockedTarget && ac.path.length === 1);
+          const reach = isFinal ? finalTouchdownReach : waypointReach;
+          const dx0 = ac.path[0].x - ac.x;
+          const dy0 = ac.path[0].y - ac.y;
+          const d0 = Math.hypot(dx0, dy0);
+          if (d0 < reach) {
+            ac.path.shift();
+            continue;
+          }
+          // If waypoint is behind/abeam the aircraft within turning radius, advance so it never orbits!
+          const aheadDot = dx0 * fwdX + dy0 * fwdY;
+          if (!isFinal && aheadDot < 0 && d0 < 52 * this.scale) {
+            ac.path.shift();
+            continue;
+          }
+          if (ac.path.length > 1 && d0 < 40 * this.scale) {
+            const d1 = dist(ac.x, ac.y, ac.path[1].x, ac.path[1].y);
+            if (d1 < d0) {
+              ac.path.shift();
+              continue;
+            }
+          }
+          break;
         }
       }
 
@@ -675,7 +782,7 @@ export class GameEngine {
       if (ac.path.length > 0) {
         const nextPt = ac.path[0];
         desiredHeading = Math.atan2(nextPt.y - ac.y, nextPt.x - ac.x);
-      } else if (!ac.isVip && ac.hasEntered) {
+      } else if (!ac.isVip && ac.hasEntered && !ac.lockedTarget) {
         if (
           ac.x < edgeMargin ||
           ac.x > this.width - edgeMargin ||
@@ -690,7 +797,10 @@ export class GameEngine {
       }
 
       const diff = normalizeAngle(desiredHeading - ac.heading);
-      const maxTurn = ac.turnRate * dt;
+      // Boost turn rate slightly on final approach so locked aircraft never orbit the touchdown point
+      const effectiveTurnRate =
+        ac.lockedTarget && ac.path.length <= 3 ? ac.turnRate * 1.9 : ac.turnRate;
+      const maxTurn = effectiveTurnRate * dt;
       if (Math.abs(diff) <= maxTurn) {
         ac.heading = desiredHeading;
       } else {
@@ -767,7 +877,7 @@ export class GameEngine {
         if (d < collisionDist) {
           this.state = 'gameover';
           this.gameOverReason = 'Narušení separace';
-          this.activeAircraft = null;
+          this.endDrawing();
           this.collisionPoint = {
             x: (a.x + b.x) / 2,
             y: (a.y + b.y) / 2
