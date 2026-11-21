@@ -1,3 +1,4 @@
+import { drawLkprEnvironment } from './lkpr-decor.js';
 import {
   AIRCRAFT_TYPES,
   getActiveRunwayDirection
@@ -44,9 +45,9 @@ export class RadarRenderer {
     // 2. Radar Grid & Sweep
     this._drawRadarGrid(ctx, cx, cy, w, h, engine.radarAngle, engine.scale);
 
-    // 3. Map background decor (e.g. Vltava river & VOR beacons on LKPR)
+    // 3. Map background decor (e.g. realistic LKPR environment, rivers & VOR beacons)
     if (engine.layout.decor) {
-      this._drawMapDecor(ctx, engine.layout.decor, engine.scale);
+      this._drawMapDecor(ctx, engine.layout.decor, engine.scale, cx, cy, w, h, time);
     }
 
     // 4. Storm Cells (Weather Radar Echoes)
@@ -176,14 +177,19 @@ export class RadarRenderer {
     ctx.restore();
   }
 
-  _drawMapDecor(ctx, decor, scale) {
+  _drawMapDecor(ctx, decor, scale, cx, cy, w, h, time) {
     ctx.save();
+
+    // Detailed airport & surrounding architecture (e.g. Praha Ruzyně LKPR)
+    if (decor.detailedMap === 'lkpr') {
+      drawLkprEnvironment(ctx, cx, cy, scale, w, h, time);
+    }
 
     // Subtle river / coastline decor
     const waterPts = decor.water || decor.vltava;
     if (waterPts && waterPts.length > 1) {
-      ctx.strokeStyle = '#0F2230';
-      ctx.lineWidth = 7 * scale;
+      ctx.strokeStyle = decor.detailedMap === 'lkpr' ? '#0E293F' : '#0F2230';
+      ctx.lineWidth = (decor.detailedMap === 'lkpr' ? 10 : 7) * scale;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
@@ -196,6 +202,12 @@ export class RadarRenderer {
       const last = waterPts[waterPts.length - 1];
       ctx.lineTo(last.x, last.y);
       ctx.stroke();
+
+      if (decor.detailedMap === 'lkpr') {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
+        ctx.lineWidth = 2 * scale;
+        ctx.stroke();
+      }
     }
 
     // VOR / radio beacons

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'atc-radar-v4';
+const CACHE_NAME = 'atc-radar-v5';
 
 const ASSETS = [
   './',
@@ -8,6 +8,7 @@ const ASSETS = [
   './icons/icon.svg',
   './js/audio.js',
   './js/maps.js',
+  './js/lkpr-decor.js',
   './js/engine.js',
   './js/renderer.js',
   './js/main.js'

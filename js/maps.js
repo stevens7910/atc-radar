@@ -268,25 +268,26 @@ export const MAPS = {
             kind: 'heliport',
             accepts: 'helicopter',
             color: '#22C55E',
-            x: cx + 8 * scale,
-            y: cy - 78 * scale,
-            radius: 22 * scale
+            x: cx - 10 * scale,
+            y: cy + 76 * scale, // Staré letiště Jih (Terminál 3 / Hangáry)
+            radius: 21 * scale
           }
         ],
         decor: {
+          detailedMap: 'lkpr',
           water: [
-            { x: width * 0.86, y: 0 },
-            { x: width * 0.81, y: height * 0.22 },
-            { x: width * 0.89, y: height * 0.44 },
-            { x: width * 0.82, y: height * 0.68 },
-            { x: width * 0.88, y: height * 0.86 },
-            { x: width * 0.84, y: height }
+            { x: width * 0.87, y: 0 },
+            { x: width * 0.83, y: height * 0.22 },
+            { x: width * 0.90, y: height * 0.44 },
+            { x: width * 0.84, y: height * 0.68 },
+            { x: width * 0.89, y: height * 0.86 },
+            { x: width * 0.85, y: height }
           ],
           vors: [
-            { code: 'OKL', x: width * 0.14, y: height * 0.22 },
-            { code: 'NER', x: width * 0.84, y: height * 0.16 },
-            { code: 'BNO', x: width * 0.85, y: height * 0.84 },
-            { code: 'VOZ', x: width * 0.22, y: height * 0.84 }
+            { code: 'OKL', x: width * 0.12, y: height * 0.20 },
+            { code: 'NER', x: width * 0.85, y: height * 0.14 },
+            { code: 'BNO', x: width * 0.86, y: height * 0.86 },
+            { code: 'VOZ', x: width * 0.18, y: height * 0.86 }
           ]
         }
       };
