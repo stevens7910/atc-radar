@@ -1,5 +1,6 @@
 import {
   AIRCRAFT_TYPES,
+  DIFFICULTY_MODES,
   MAPS,
   getActiveRunwayDirection,
   getRunwayEndpoints
@@ -51,6 +52,8 @@ export class GameEngine {
 
     this.mapId = 'basic';
     this.mapConfig = MAPS.basic;
+    this.difficultyId = 'beginner';
+    this.difficultyConfig = DIFFICULTY_MODES.beginner;
     this.layout = { runways: [], heliports: [], decor: null };
 
     this.state = 'menu'; // 'menu' | 'playing' | 'paused' | 'gameover'
@@ -160,9 +163,11 @@ export class GameEngine {
     }
   }
 
-  startGame(mapId = 'basic') {
+  startGame(mapId = 'basic', difficultyId = this.difficultyId) {
     this.mapId = MAPS[mapId] ? mapId : 'basic';
     this.mapConfig = MAPS[this.mapId];
+    this.difficultyId = DIFFICULTY_MODES[difficultyId] ? difficultyId : 'beginner';
+    this.difficultyConfig = DIFFICULTY_MODES[this.difficultyId];
     this._rebuildLayout();
     this.resetCamera();
 
@@ -184,13 +189,15 @@ export class GameEngine {
 
     this.nextId = 1;
     this.spawnCount = 0;
-    this.spawnTimer = 0.6;
+    this.spawnTimer = this.difficultyId === 'beginner' ? 2.6 : 0.8;
 
     this._randomizeWind(false);
 
-    // Immediately queue 2 initial aircraft
+    // Beginner starts very calmly with 1 aircraft; Advanced/Expert start with 2
     this._queueSpawn(false);
-    this._queueSpawn(false);
+    if (this.difficultyId !== 'beginner') {
+      this._queueSpawn(false);
+    }
 
     if (this.onStateChange) this.onStateChange(this.state);
   }
@@ -252,25 +259,52 @@ export class GameEngine {
     return `${prefix}-${num}`;
   }
 
+  /**
+   * Returns current aircraft speed multiplier based on difficulty mode and score.
+   * In Beginner mode, speed stays very gentle until 15 landings, then gradually increases.
+   */
+  getDynamicSpeedMultiplier() {
+    const d = this.difficultyConfig;
+    if (this.score < d.rampStartScore) {
+      return d.baseSpeedMult;
+    }
+    const progress = Math.min(1, (this.score - d.rampStartScore) / 40);
+    return d.baseSpeedMult + (d.maxSpeedMult - d.baseSpeedMult) * progress;
+  }
+
   _getCurrentSpawnInterval() {
-    const progress = Math.min(1, this.score / 45);
-    const { baseSpawnInterval, minSpawnInterval } = this.mapConfig;
-    return baseSpawnInterval - (baseSpawnInterval - minSpawnInterval) * progress;
+    const d = this.difficultyConfig;
+    const base = this.mapConfig.baseSpawnInterval * d.spawnIntervalMult;
+    const min = this.mapConfig.minSpawnInterval * d.minSpawnIntervalMult;
+
+    let progress = 0;
+    if (this.difficultyId === 'beginner') {
+      if (this.score < 15) {
+        // Very gentle density ramp during first 15 landings
+        progress = (this.score / 15) * 0.22;
+      } else {
+        progress = Math.min(1, 0.22 + ((this.score - 15) / 40) * 0.78);
+      }
+    } else {
+      progress = Math.min(1, this.score / 45);
+    }
+    return base - (base - min) * progress;
   }
 
   _getMaxConcurrent() {
-    const extra = Math.floor(this.score / 5);
-    return Math.min(
-      this.mapConfig.maxConcurrentCap,
-      this.mapConfig.maxConcurrentBase + extra
-    );
+    const d = this.difficultyConfig;
+    const baseMax = Math.max(2, this.mapConfig.maxConcurrentBase + d.maxConcurrentOffset);
+    const step = this.difficultyId === 'beginner' ? 6 : 5;
+    const extra = Math.floor(this.score / step);
+    const cap = Math.max(4, this.mapConfig.maxConcurrentCap + d.maxConcurrentOffset);
+    return Math.min(cap, baseMax + extra);
   }
 
   _queueSpawn(allowVip = true) {
     this.spawnCount++;
     const isVip =
       allowVip &&
-      this.score >= 5 &&
+      this.score >= this.difficultyConfig.vipMinScore &&
       this.spawnCount % this.mapConfig.vipFrequency === 0;
 
     let typeKey = 'airliner';
@@ -668,7 +702,11 @@ export class GameEngine {
       }
     }
 
-    if (this.mapConfig.stormsEnabled && this.score >= this.mapConfig.stormsMinScore) {
+    const stormMinScore = Math.max(
+      0,
+      this.mapConfig.stormsMinScore + this.difficultyConfig.stormsMinScoreBonus
+    );
+    if (this.mapConfig.stormsEnabled && this.score >= stormMinScore) {
       this.stormTimer -= dt;
       if (this.stormTimer <= 0 && this.storms.length < 2) {
         this._spawnStorm();
@@ -807,7 +845,8 @@ export class GameEngine {
         ac.heading = normalizeAngle(ac.heading + Math.sign(diff) * maxTurn);
       }
 
-      const effectiveSpeed = ac.turbulent ? ac.speed * 0.7 : ac.speed;
+      const dynamicSpeedMult = this.getDynamicSpeedMultiplier();
+      const effectiveSpeed = ac.speed * dynamicSpeedMult * (ac.turbulent ? 0.7 : 1);
       ac.x += Math.cos(ac.heading) * effectiveSpeed * dt;
       ac.y += Math.sin(ac.heading) * effectiveSpeed * dt;
 

@@ -179,20 +179,21 @@ export class RadarRenderer {
   _drawMapDecor(ctx, decor, scale) {
     ctx.save();
 
-    // Subtle Vltava river meander
-    if (decor.vltava && decor.vltava.length > 1) {
+    // Subtle river / coastline decor
+    const waterPts = decor.water || decor.vltava;
+    if (waterPts && waterPts.length > 1) {
       ctx.strokeStyle = '#0F2230';
       ctx.lineWidth = 7 * scale;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
-      ctx.moveTo(decor.vltava[0].x, decor.vltava[0].y);
-      for (let i = 1; i < decor.vltava.length - 1; i++) {
-        const xc = (decor.vltava[i].x + decor.vltava[i + 1].x) / 2;
-        const yc = (decor.vltava[i].y + decor.vltava[i + 1].y) / 2;
-        ctx.quadraticCurveTo(decor.vltava[i].x, decor.vltava[i].y, xc, yc);
+      ctx.moveTo(waterPts[0].x, waterPts[0].y);
+      for (let i = 1; i < waterPts.length - 1; i++) {
+        const xc = (waterPts[i].x + waterPts[i + 1].x) / 2;
+        const yc = (waterPts[i].y + waterPts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(waterPts[i].x, waterPts[i].y, xc, yc);
       }
-      const last = decor.vltava[decor.vltava.length - 1];
+      const last = waterPts[waterPts.length - 1];
       ctx.lineTo(last.x, last.y);
       ctx.stroke();
     }

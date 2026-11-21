@@ -1,9 +1,11 @@
 import { SoundEngine } from './audio.js';
 import { GameEngine } from './engine.js';
+import { DIFFICULTY_MODES } from './maps.js';
 import { RadarRenderer } from './renderer.js';
 
 const STORAGE_KEY_BEST = 'atc_radar_best_v1';
 const STORAGE_KEY_MUTE = 'atc_radar_muted_v1';
+const STORAGE_KEY_DIFF = 'atc_radar_diff_v1';
 
 function loadBestScores() {
   try {
@@ -13,11 +15,16 @@ function loadBestScores() {
   }
 }
 
-function saveBestScore(mapId, score) {
+function getBestKey(mapId, difficultyId) {
+  return `${mapId}:${difficultyId}`;
+}
+
+function saveBestScore(mapId, difficultyId, score) {
   const best = loadBestScores();
-  const prev = best[mapId] || 0;
+  const key = getBestKey(mapId, difficultyId);
+  const prev = best[key] || 0;
   if (score > prev) {
-    best[mapId] = score;
+    best[key] = score;
     try {
       localStorage.setItem(STORAGE_KEY_BEST, JSON.stringify(best));
     } catch {
@@ -68,10 +75,8 @@ const zoomReadout = document.getElementById('zoom-readout');
 const modalMenu = document.getElementById('modal-menu');
 const modalPause = document.getElementById('modal-pause');
 const modalGameOver = document.getElementById('modal-gameover');
-
-const bestBasicEl = document.getElementById('best-basic');
-const bestBusyEl = document.getElementById('best-busy');
-const bestLkprEl = document.getElementById('best-lkpr');
+const difficultyDescEl = document.getElementById('difficulty-desc');
+const difficultyBtns = document.querySelectorAll('[data-difficulty]');
 
 const goTitleEl = document.getElementById('go-title');
 const goScoreEl = document.getElementById('go-score');
@@ -86,6 +91,15 @@ const btnRetry = document.getElementById('btn-retry');
 const btnGoMenu = document.getElementById('btn-go-menu');
 
 let selectedMapId = 'basic';
+let selectedDifficultyId = 'beginner';
+try {
+  const savedDiff = localStorage.getItem(STORAGE_KEY_DIFF);
+  if (savedDiff && DIFFICULTY_MODES[savedDiff]) {
+    selectedDifficultyId = savedDiff;
+  }
+} catch {
+  // ignore
+}
 let lastFrameTime = performance.now();
 
 // Multi-touch & Pointer state
@@ -123,11 +137,24 @@ function updateZoomUI(zoom) {
   zoomReadout.textContent = `${zoom.toFixed(1)}×`;
 }
 
+function updateDifficultyUI() {
+  const mode = DIFFICULTY_MODES[selectedDifficultyId] || DIFFICULTY_MODES.beginner;
+  difficultyDescEl.textContent = mode.desc;
+  difficultyBtns.forEach((btn) => {
+    const active = btn.dataset.difficulty === selectedDifficultyId;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  refreshMenuBestScores();
+}
+
 function refreshMenuBestScores() {
   const best = loadBestScores();
-  bestBasicEl.textContent = best.basic || 0;
-  bestBusyEl.textContent = best.busy || 0;
-  bestLkprEl.textContent = best.lkpr || 0;
+  document.querySelectorAll('[data-best-map]').forEach((el) => {
+    const mapId = el.dataset.bestMap;
+    const key = getBestKey(mapId, selectedDifficultyId);
+    el.textContent = best[key] || 0;
+  });
 }
 
 function syncUIState(state) {
@@ -149,15 +176,19 @@ function syncUIState(state) {
   }
 
   if (state === 'menu') {
-    refreshMenuBestScores();
+    updateDifficultyUI();
   }
 
   if (state === 'gameover') {
-    const { isNewRecord, best } = saveBestScore(engine.mapId, engine.score);
+    const { isNewRecord, best } = saveBestScore(
+      engine.mapId,
+      engine.difficultyId,
+      engine.score
+    );
     goTitleEl.textContent = engine.gameOverReason || 'Narušení separace';
     goScoreEl.textContent = engine.score;
     goBestEl.textContent = best;
-    goMapEl.textContent = engine.mapConfig.name;
+    goMapEl.textContent = `${engine.mapConfig.name} • ${engine.difficultyConfig.label}`;
     goRecordBadge.classList.toggle('hidden', !isNewRecord || engine.score === 0);
   }
 }
@@ -184,12 +215,27 @@ updateSpeedUI();
 updateTagsUI();
 syncUIState('menu');
 
+// Difficulty selection buttons
+difficultyBtns.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.difficulty;
+    if (!DIFFICULTY_MODES[id]) return;
+    selectedDifficultyId = id;
+    try {
+      localStorage.setItem(STORAGE_KEY_DIFF, id);
+    } catch {
+      // ignore
+    }
+    updateDifficultyUI();
+  });
+});
+
 // Map selection buttons
 document.querySelectorAll('[data-map]').forEach((btn) => {
   btn.addEventListener('click', () => {
     audio.init();
     selectedMapId = btn.dataset.map;
-    engine.startGame(selectedMapId);
+    engine.startGame(selectedMapId, selectedDifficultyId);
   });
 });
 
@@ -234,7 +280,7 @@ btnResume.addEventListener('click', () => {
 
 btnPauseRestart.addEventListener('click', () => {
   audio.init();
-  engine.startGame(selectedMapId);
+  engine.startGame(selectedMapId, selectedDifficultyId);
 });
 
 btnPauseMenu.addEventListener('click', () => {
@@ -243,7 +289,7 @@ btnPauseMenu.addEventListener('click', () => {
 
 btnRetry.addEventListener('click', () => {
   audio.init();
-  engine.startGame(selectedMapId);
+  engine.startGame(selectedMapId, selectedDifficultyId);
 });
 
 btnGoMenu.addEventListener('click', () => {

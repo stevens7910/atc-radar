@@ -84,14 +84,22 @@
       </div>
       <h1 id="menu-title" class="modal-title">Řízení letového provozu</h1>
       <p class="modal-subtitle">
-        Nakresli letadlům trasu k odpovídající přistávací ploše ve směru přiblížení a udržuj bezpečný rozestup.
+        Nakresli letadlům trasu k odpovídající přistávací ploše proti větru. Dvěma prsty můžeš radar přiblížit.
       </p>
+
+      <!-- Difficulty Mode Selector -->
+      <div class="difficulty-bar" role="radiogroup" aria-label="Obtížnost">
+        <button class="diff-btn is-active" type="button" data-difficulty="beginner" aria-pressed="true">Začátečník</button>
+        <button class="diff-btn" type="button" data-difficulty="advanced" aria-pressed="false">Pokročilý</button>
+        <button class="diff-btn" type="button" data-difficulty="expert" aria-pressed="false">Expert</button>
+      </div>
+      <p id="difficulty-desc" class="difficulty-desc">Velmi pomalý start, pozvolné zrychlení po 15 přistáních.</p>
 
       <div class="map-list">
         <button class="map-card" type="button" data-map="basic">
           <div class="map-card-top">
             <span class="map-name">Základní letiště</span>
-            <span class="map-best">Rekord: <span id="best-basic">0</span></span>
+            <span class="map-best">Rekord: <span data-best-map="basic">0</span></span>
           </div>
           <div class="map-desc">Dvě kolmé dráhy a heliport • Ideální pro rozehřátí</div>
         </button>
@@ -99,7 +107,7 @@
         <button class="map-card" type="button" data-map="busy">
           <div class="map-card-top">
             <span class="map-name">Rušný uzel</span>
-            <span class="map-best">Rekord: <span id="best-busy">0</span></span>
+            <span class="map-best">Rekord: <span data-best-map="busy">0</span></span>
           </div>
           <div class="map-desc">Křížící se dráhy, bouřky a hustší provoz</div>
         </button>
@@ -107,9 +115,49 @@
         <button class="map-card" type="button" data-map="lkpr">
           <div class="map-card-top">
             <span class="map-name">Praha Ruzyně (LKPR)</span>
-            <span class="map-best">Rekord: <span id="best-lkpr">0</span></span>
+            <span class="map-best">Rekord: <span data-best-map="lkpr">0</span></span>
           </div>
           <div class="map-desc">Dráhy 06/24 &amp; 12/30, Vltava, VOR majáky a reálné volací znaky</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="eddf">
+          <div class="map-card-top">
+            <span class="map-name">Frankfurt nad Mohanem (EDDF)</span>
+            <span class="map-best">Rekord: <span data-best-map="eddf">0</span></span>
+          </div>
+          <div class="map-desc">Hlavní 07/25, kolmá 18/36, řeka Mohan a německý provoz</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="egll">
+          <div class="map-card-top">
+            <span class="map-name">Londýn Heathrow (EGLL)</span>
+            <span class="map-best">Rekord: <span data-best-map="egll">0</span></span>
+          </div>
+          <div class="map-desc">Paralelní dráhy 09L/27R &amp; 09R/27L, řeka Temže a VOR stacky</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="lfpg">
+          <div class="map-card-top">
+            <span class="map-name">Paříž Charles de Gaulle (LFPG)</span>
+            <span class="map-best">Rekord: <span data-best-map="lfpg">0</span></span>
+          </div>
+          <div class="map-desc">Posunuté paralelní dráhy 08/26 a francouzský provoz</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="lirf">
+          <div class="map-card-top">
+            <span class="map-name">Řím Fiumicino (LIRF)</span>
+            <span class="map-best">Rekord: <span data-best-map="lirf">0</span></span>
+          </div>
+          <div class="map-desc">Pobřežní dráhy 16/34 a 07/25, Tyrhénské moře a italský provoz</div>
+        </button>
+
+        <button class="map-card" type="button" data-map="kjfk">
+          <div class="map-card-top">
+            <span class="map-name">New York JFK (KJFK)</span>
+            <span class="map-best">Rekord: <span data-best-map="kjfk">0</span></span>
+          </div>
+          <div class="map-desc">Křížící se dráhy 04/22 &amp; 13/31 u Jamaica Bay a hustý provoz</div>
         </button>
       </div>
 
